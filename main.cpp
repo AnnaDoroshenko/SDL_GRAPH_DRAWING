@@ -3,11 +3,20 @@
 #include <vector>
 #include <utility>
 #include <optional>
+#include <SDL2/SDL.h>
+#include <cmath>
 
 
-const unsigned int WIDTH = 640;
-const unsigned int HEIGT = 480;
+//Screen dimension constants
+const int SCREEN_WIDTH = 640;
+const int SCREEN_HEIGHT = 480;
 
+
+SDL_Window* gWindow = NULL;		//The window we'll be rendering to
+SDL_Renderer* gRenderer = NULL; //The window renderer
+
+
+// ========== Data types ======== //
 
 struct Transmission {
 	public:
@@ -65,6 +74,142 @@ std::ostream& operator<<(std::ostream& os, const Chunk& chunk) {
 
 	return os;
 }
+// =========================================================
+
+
+// ==================== Methods for SDL ==================== //
+bool init() {
+	
+	bool success = true;
+
+	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+		std::cout << "SDL could not initialize! SDL Error: " << SDL_GetError() << std::endl;
+		success = false;
+	} else {
+		// Set texture filtering to linear
+		if (!SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1")) {
+			std::cout << "Warning: Linear texture filtering not enabled!" << std::endl;
+		}
+
+		// Create window
+		gWindow = SDL_CreateWindow("Little SDL", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN);
+		if (gWindow == NULL) {
+			std::cout << "Window could not be created! SDL Error: " << SDL_GetError() << std::endl;
+			success = false;
+		} else {
+			//Create renderer for window
+			gRenderer = SDL_CreateRenderer(gWindow, -1, SDL_RENDERER_ACCELERATED);
+			if (gRenderer == NULL) {
+				std::cout << "Renderer could not be created! SDL Error: " << SDL_GetError() << std::endl;
+				success = false;
+			} else {
+				//Initialize renderer color
+				SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
+			}
+		}
+	}
+
+
+	return success;
+}
+
+
+void close() {
+	//Destroy window	
+	SDL_DestroyRenderer(gRenderer);
+	SDL_DestroyWindow(gWindow);
+	gWindow = NULL;
+	gRenderer = NULL;
+
+	//Quit SDL subsystems
+	SDL_Quit();
+}
+
+
+std::pair<unsigned int, unsigned int> getUnits(const std::vector<Chunk>& chunks);
+
+
+void drawGraph(const std::vector<Chunk>& chunks) {
+	const std::pair<unsigned int, unsigned int> counted = getUnits(chunks);
+	std::cout << "(x_unit = " << counted.first << ", y_unit = " << counted.second << ")" << std::endl;
+	unsigned int x_unit = counted.first;
+	unsigned int y_unit = counted.second;
+
+	//Start up SDL and create window
+	if (!init()) {
+		std::cout << "Failed to initialize!" << std::endl;
+	} else {		
+		bool quit = false;
+		SDL_Event e;
+
+		while (!quit) {
+			//Handle events on queue
+			while (SDL_PollEvent(&e) != 0) {
+				if (e.type == SDL_QUIT) {
+					quit = true;
+				}
+			}
+
+			//Clear screen
+			SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
+			SDL_RenderClear(gRenderer);
+
+			std::vector<SDL_Rect> rectangulars;
+
+			for (const auto& chunk : chunks) {
+				// TODO: add margin
+				const auto calculate_begin = [x_unit](auto elem) {
+					return elem.begin_at * x_unit;
+					// return margin + elem.begin_at * x_unit;
+				};
+
+				const auto calculate_finish = [x_unit](auto elem) {
+					return elem.finish_at * x_unit;
+					// return margin + elem.finish_at * x_unit;
+				};
+
+				unsigned int x = calculate_begin(chunk);
+				unsigned int elems_before = 0;
+				for (unsigned int i = 0; ((i < chunk.proc_num) && (i < trans_count_max.size())); i++) {
+					if (trans_count_max != -1) {
+						elems_before += trans_count_max[i];
+					}
+				}
+				// unsigned int y = margin + elems_before * y_unit;
+				unsigned int y = elems_before * y_unit;
+				unsigned int width = calculate_finish(chunk);
+				unsigned int height = y_unit;
+				const SDL_Rect proc_rect = {x, y, width, height};
+				rectangulars.push_back(proc_rect);
+				const std::vector<Transmission> curr_transmissions = chunk.transmissions;
+				if (!curr_transmissions.empty()) {
+					for (unsigned int j = 0; j < curr_transmissions.size(); j++) {
+						x = calculate_begin(curr_transmissions[j]);
+						y += (j + 1) * y_unit; // +1 as index starts with 0
+						width = calculate_finish(curr_transmissions[j]);
+						const SDL_Rect trans_rect = {x, y, width, height};
+						rectangulars.push_back(trans_rect);
+					}
+				}
+			}
+
+			if (!rectangulars.empty()) {
+				SDL_RenderDrawRects(gRenderer, &rectangulars[0], rectangulars.size());
+			}
+
+			//Update screen
+			SDL_RenderPresent( gRenderer );
+		}
+	}
+
+	//Free resources and close SDL
+	close();
+}
+
+// ========================================================= //
+
+
+// ============= Tools ================ //
 
 std::pair<unsigned int, unsigned int> getUnits(const std::vector<Chunk>& chunks) {
 	// calculation of x_unit
@@ -97,12 +242,12 @@ std::pair<unsigned int, unsigned int> getUnits(const std::vector<Chunk>& chunks)
 	}
 
 
-	// return {(unsigned int) WIDTH / max_x, (unsigned int) HEIGT / sum_y};
-	return { max_x, sum_y};
+	return {(unsigned int) SCREEN_WIDTH / max_x, (unsigned int) SCREEN_HEIGHT / sum_y};
 }
-
+// ================================================== //
 
 int main() {
+
 	std::vector<Chunk> chunks;
 	chunks.push_back(Chunk(1, "A", 0, 2, std::vector<Transmission>{}));
 	chunks.push_back(Chunk(1, "B", 2, 4, std::vector<Transmission>{}));
@@ -123,9 +268,10 @@ int main() {
 		std::cout << chunk << std::endl;
 	}
 
-	const std::pair<float, unsigned int> counted = getUnits(chunks);
-	std::cout << "(width = " << counted.first << ", height = " << counted.second << ")" << std::endl;
+	// const std::pair<float, unsigned int> counted = getUnits(chunks);
+	// std::cout << "(width = " << counted.first << ", height = " << counted.second << ")" << std::endl;
+	drawGraph(chunks);
 
-
+	
 	return 0;
 }
