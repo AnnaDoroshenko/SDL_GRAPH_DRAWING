@@ -29,20 +29,20 @@ struct Transmission {
 };
 
 
-struct Chunk {
+struct Subtask {
     unsigned int proc_num;
     std::string name;
     unsigned int begin_at;
     unsigned int finish_at;
     std::vector<Transmission> transmissions;
 
-    Chunk(unsigned int proc_num, const std::string& name,
+    Subtask(unsigned int proc_num, const std::string& name,
             unsigned int begin_at, unsigned int finish_at,
             const std::vector<Transmission>& transmissions) :
         proc_num(proc_num), name(name), begin_at(begin_at),
         finish_at(finish_at), transmissions(transmissions) {}
 
-    friend std::ostream& operator<<(std::ostream& os, const Chunk& chunk);
+    friend std::ostream& operator<<(std::ostream& os, const Subtask& subtask);
 };
 
 
@@ -62,14 +62,14 @@ std::ostream& operator<<(std::ostream& os, const Transmission& trans) {
 }
 
 
-std::ostream& operator<<(std::ostream& os, const Chunk& chunk) {
-    os << "Chunk(proc: " << chunk.proc_num << ", name: " << chunk.name << ", b: " << chunk.begin_at
-        << ", f: " << chunk.finish_at << ", transmissions:";
+std::ostream& operator<<(std::ostream& os, const Subtask& subtask) {
+    os << "Subtask(proc: " << subtask.proc_num << ", name: " << subtask.name << ", b: " << subtask.begin_at
+        << ", f: " << subtask.finish_at << ", transmissions:";
 
-    if (chunk.transmissions.empty()) {
+    if (subtask.transmissions.empty()) {
         os << " none";
     } else {
-        for (const auto& transmission : chunk.transmissions) {
+        for (const auto& transmission : subtask.transmissions) {
             os << transmission << "";
         }
     }
@@ -81,6 +81,7 @@ std::ostream& operator<<(std::ostream& os, const Chunk& chunk) {
 
 
 // ==================== Methods for SDL ==================== //
+
 bool init() {
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -127,24 +128,24 @@ void close() {
 }
 
 
-DrawingBasics getDrawingBasics(const std::vector<Chunk>& chunks) {
+DrawingBasics getDrawingBasics(const std::vector<Subtask>& subtasks) {
     // calculation of x_unit
     unsigned int max_x = 0;
     unsigned int max_proc_num = 0;
-    for (const auto& chunk : chunks) {
-        unsigned int curr_max_time = chunk.finish_at;
-        unsigned int curr_proc_num = chunk.proc_num;
-        if (!chunk.transmissions.empty()) {
-            curr_max_time = chunk.transmissions.back().finish_at;
+    for (const auto& subtask : subtasks) {
+        unsigned int curr_max_time = subtask.finish_at;
+        unsigned int curr_proc_num = subtask.proc_num;
+        if (!subtask.transmissions.empty()) {
+            curr_max_time = subtask.transmissions.back().finish_at;
         }
         if (curr_max_time > max_x) max_x = curr_max_time;
         if (curr_proc_num > max_proc_num) max_proc_num = curr_proc_num;
     }
 
     std::vector<int> trans_count_max(max_proc_num + 1, -1);
-    for (const auto& chunk : chunks) {
-        const unsigned int curr_proc_num = chunk.proc_num;
-        const int curr_trans_size = chunk.transmissions.size();
+    for (const auto& subtask : subtasks) {
+        const unsigned int curr_proc_num = subtask.proc_num;
+        const int curr_trans_size = subtask.transmissions.size();
         if (curr_trans_size > trans_count_max[curr_proc_num])
             trans_count_max[curr_proc_num] = curr_trans_size;
     }
@@ -153,7 +154,7 @@ DrawingBasics getDrawingBasics(const std::vector<Chunk>& chunks) {
     unsigned int sum_y = 0;
     for (const auto& trans_count : trans_count_max) {
         if (trans_count != -1) {
-            sum_y += trans_count + 1; // + 1 for the main chunk
+            sum_y += trans_count + 1; // + 1 for the Subtask itself
         }
     }
 
@@ -163,14 +164,14 @@ DrawingBasics getDrawingBasics(const std::vector<Chunk>& chunks) {
 }
 
 
-void drawGraph(const std::vector<Chunk>& chunks) {
-    const auto& [units, trans_count] = getDrawingBasics(chunks);
+void drawGraph(const std::vector<Subtask>& subtasks) {
+    const auto& [units, trans_count] = getDrawingBasics(subtasks);
     const auto& [x_unit, y_unit] = units;
     std::cout << "(x_unit = " << x_unit << ", y_unit = " << y_unit << ")" << std::endl;
 
     // Prepare stuff to draw
     std::vector<SDL_Rect> rectangles;
-    for (const auto& chunk : chunks) {
+    for (const auto& subtask : subtasks) {
         // TODO: add margin
         const auto calculate_begin = [x_unit](const auto& elem) {
             return elem.begin_at * x_unit;
@@ -185,21 +186,21 @@ void drawGraph(const std::vector<Chunk>& chunks) {
         // unsigned int y = margin + elems_before * y_unit;
         const unsigned int elems_before = [&](){
             unsigned int count = 0;
-            for (unsigned int i = 0; i < chunk.proc_num; i++) {
+            for (unsigned int i = 0; i < subtask.proc_num; i++) {
                 if (trans_count[i] != -1) {
                     count += trans_count[i] + 1; // +1 for the Task itself
                 }
             }
             return count;
         }();
-        const int x = calculate_begin(chunk);
+        const int x = calculate_begin(subtask);
         const int y = elems_before * y_unit;
-        const int width = calculate_width(chunk);
+        const int width = calculate_width(subtask);
         const int height = y_unit;
         const SDL_Rect rect{x, y, width, height};
         rectangles.emplace_back(std::move(rect));
 
-        const auto& curr_transmissions = chunk.transmissions;
+        const auto& curr_transmissions = subtask.transmissions;
         if (curr_transmissions.empty()) continue;
         for (unsigned int index = 0; index < curr_transmissions.size(); index++) {
             const int x = calculate_begin(curr_transmissions[index]);
@@ -223,7 +224,8 @@ void drawGraph(const std::vector<Chunk>& chunks) {
     while (!quit) {
         //Handle events on queue
         while (SDL_PollEvent(&e) != 0) {
-            if (e.type == SDL_QUIT) {
+            // if (e.type == SDL_QUIT) {
+            if ((e.type == SDL_QUIT) || (e.key.keysym.sym == SDLK_q)) {
                 quit = true;
             }
         }
@@ -249,29 +251,29 @@ void drawGraph(const std::vector<Chunk>& chunks) {
 
 int main() {
 
-    std::vector<Chunk> chunks;
-    chunks.emplace_back(1, "A", 0, 2, std::vector<Transmission>{});
-    chunks.emplace_back(1, "B", 2, 4, std::vector<Transmission>{});
+    std::vector<Subtask> subtasks;
+    subtasks.emplace_back(1, "A", 0, 2, std::vector<Transmission>{});
+    subtasks.emplace_back(1, "B", 2, 4, std::vector<Transmission>{});
 
     std::vector<Transmission> transmissions1;
     transmissions1.emplace_back(Transmission(3, 4, 1));
     transmissions1.emplace_back(Transmission(3, 4, 3));
 
-    chunks.emplace_back(2, "C", 0, 3, transmissions1);
+    subtasks.emplace_back(2, "C", 0, 3, transmissions1);
 
     std::vector<Transmission> transmissions2;
     transmissions2.emplace_back(5, 6, 1);
 
-    chunks.emplace_back(3, "D", 4, 5, transmissions2);
-    chunks.emplace_back(1, "E", 6, 7, std::vector<Transmission>{});
+    subtasks.emplace_back(3, "D", 4, 5, transmissions2);
+    subtasks.emplace_back(1, "E", 6, 7, std::vector<Transmission>{});
 
-    for (auto& chunk : chunks) {
-        std::cout << chunk << std::endl;
+    for (auto& subtask : subtasks) {
+        std::cout << subtask << std::endl;
     }
 
-    // const std::pair<float, unsigned int> counted = getUnits(chunks);
+    // const std::pair<float, unsigned int> counted = getUnits(Subtasks);
     // std::cout << "(width = " << counted.first << ", height = " << counted.second << ")" << std::endl;
-    drawGraph(chunks);
+    drawGraph(subtasks);
 
 
     return 0;
