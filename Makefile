@@ -20,7 +20,7 @@ all: cleanExe $(mainFileName)
 
 # Linker
 $(mainFileName): $(filesObj)
-	g++ $(COMPILER_FLAGS) $(OPTIMIZATION_FLAG) $(LANGUAGE_LEVEL) $^ -o $@ -lSDL2
+	g++ $(COMPILER_FLAGS) $(OPTIMIZATION_FLAG) $(LANGUAGE_LEVEL) $^ -o $@ -lSDL2 -lSDL2_ttf
 
 
 # Utils

@@ -4,6 +4,7 @@
 #include <utility>
 #include <optional>
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
 #include <cmath>
 
 
@@ -56,6 +57,18 @@ struct DrawingBasics {
 };
 
 
+struct DrawingElement {
+	SDL_Rect rectangle;
+	SDL_Surface*  surface;
+	SDL_Texture* texture;
+	SDL_Color color;
+
+	DrawingElement(const SDL_Rect& rectangle, SDL_Surface*  surface,
+			SDL_Texture* texture, const SDL_Color& color) :
+		rectangle(rectangle), surface(surface), texture(texture), color(color) {}
+};
+
+
 std::ostream& operator<<(std::ostream& os, const Transmission& trans) {
     os << " T(b: " << trans.begin_at << ", f: " << trans.finish_at << ", dest: " << trans.proc_dest << ")";
     return os;
@@ -89,6 +102,11 @@ bool init() {
         return false;
     }
 
+    if (TTF_Init() == -1) {
+    	std::cout << "SDL_ttf could not initialize! SDL Error: " << TTF_GetError() << std::endl;
+    	return false;
+    }
+
     // Set texture filtering to linear
     if (!SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1")) {
         std::cout << "Warning: Linear texture filtering not enabled!" << std::endl;
@@ -96,14 +114,14 @@ bool init() {
 
     // Create window
     gWindow = SDL_CreateWindow("Little SDL", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN);
-    if (gWindow == NULL) {
+    if (gWindow == nullptr) {
         std::cout << "Window could not be created! SDL Error: " << SDL_GetError() << std::endl;
         return false;
     }
 
     // Create renderer for window
     gRenderer = SDL_CreateRenderer(gWindow, -1, SDL_RENDERER_ACCELERATED);
-    if (gRenderer == NULL) {
+    if (gRenderer == nullptr) {
         std::cout << "Renderer could not be created! SDL Error: " << SDL_GetError() << std::endl;
         return false;
     }
@@ -154,7 +172,7 @@ DrawingBasics getDrawingBasics(const std::vector<Subtask>& subtasks) {
     unsigned int sum_y = 0;
     for (const auto& trans_count : trans_count_max) {
         if (trans_count != -1) {
-            sum_y += trans_count + 1; // + 1 for the Subtask itself
+            sum_y += trans_count + 2; // + 2 = 1 * 2 for the Subtask itself (weight == 2)
         }
     }
 
@@ -169,8 +187,23 @@ void drawGraph(const std::vector<Subtask>& subtasks) {
     const auto& [x_unit, y_unit] = units;
     std::cout << "(x_unit = " << x_unit << ", y_unit = " << y_unit << ")" << std::endl;
 
+    if (!init()) {
+        std::cout << "Failed to initialize!" << std::endl;
+        return;
+    }
+
+    TTF_Font* font = TTF_OpenFont("/usr/share/fonts/truetype/freefont/FreeMono.ttf", 200);
+    if (font == nullptr) {
+    	std::cout << "Unable to open font" << std::endl;
+    	return;
+    }
+
     // Prepare stuff to draw
-    std::vector<SDL_Rect> rectangles;
+    const SDL_Color subtask_color = {255, 0, 0, 0};
+    const SDL_Color transmission_color = {0, 255, 0, 0};
+    std::vector<DrawingElement> drawing_elements;
+    std::vector<unsigned int> core_separators;
+
     for (const auto& subtask : subtasks) {
         // TODO: add margin
         const auto calculate_begin = [x_unit](const auto& elem) {
@@ -188,7 +221,7 @@ void drawGraph(const std::vector<Subtask>& subtasks) {
             unsigned int count = 0;
             for (unsigned int i = 0; i < subtask.proc_num; i++) {
                 if (trans_count[i] != -1) {
-                    count += trans_count[i] + 1; // +1 for the Task itself
+                    count += trans_count[i] + 2; // + 2 = 1 * 2 for the Subtask itself (weight == 2)
                 }
             }
             return count;
@@ -196,25 +229,28 @@ void drawGraph(const std::vector<Subtask>& subtasks) {
         const int x = calculate_begin(subtask);
         const int y = elems_before * y_unit;
         const int width = calculate_width(subtask);
-        const int height = y_unit;
+        const int height = y_unit * 2;
         const SDL_Rect rect{x, y, width, height};
-        rectangles.emplace_back(std::move(rect));
+
+        SDL_Surface*  surface = TTF_RenderText_Solid(font, subtask.name.c_str(), subtask_color);
+		SDL_Texture* texture = SDL_CreateTextureFromSurface(gRenderer, surface);
+        drawing_elements.emplace_back(std::move(rect), surface, texture, subtask_color);
 
         const auto& curr_transmissions = subtask.transmissions;
-        if (curr_transmissions.empty()) continue;
         for (unsigned int index = 0; index < curr_transmissions.size(); index++) {
-            const int x = calculate_begin(curr_transmissions[index]);
-            const int y = (elems_before + 1 + index) * y_unit; // +1 for the Task itself
-            const int width = calculate_width(curr_transmissions[index]);
+        	const auto& curr_trans = curr_transmissions[index];
+            const int x = calculate_begin(curr_trans);
+            const int y = (elems_before + 2 + index) * y_unit; // + 2 = 1 * 2 for the Subtask itself (weight == 2)
+            const int width = calculate_width(curr_trans);
             const int height = y_unit;
             const SDL_Rect rect{x, y, width, height};
-            rectangles.emplace_back(std::move(rect));
-        }
-    }
 
-    if (!init()) {
-        std::cout << "Failed to initialize!" << std::endl;
-        return;
+            const std::string to_proc = std::string{"To "} + std::to_string(curr_trans.proc_dest) + " : " + subtask.name;
+            SDL_Surface*  surface = TTF_RenderText_Solid(font, to_proc.c_str(), transmission_color);
+			SDL_Texture* texture = SDL_CreateTextureFromSurface(gRenderer, surface);
+        	drawing_elements.emplace_back(std::move(rect), surface, texture, transmission_color);
+        }
+        core_separators.push_back((elems_before + 2 + curr_transmissions.size()) * y_unit);
     }
 
     // Draw stuff
@@ -224,7 +260,6 @@ void drawGraph(const std::vector<Subtask>& subtasks) {
     while (!quit) {
         //Handle events on queue
         while (SDL_PollEvent(&e) != 0) {
-            // if (e.type == SDL_QUIT) {
             if ((e.type == SDL_QUIT) || (e.key.keysym.sym == SDLK_q)) {
                 quit = true;
             }
@@ -234,14 +269,38 @@ void drawGraph(const std::vector<Subtask>& subtasks) {
         SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
         SDL_RenderClear(gRenderer);
 
-        if (!rectangles.empty()) {
-            SDL_SetRenderDrawColor(gRenderer, 0xFF, 0x00, 0x00, 0xFF);
-            SDL_RenderDrawRects(gRenderer, &rectangles[0], rectangles.size());
-        }
+        // Draw a grid
+        SDL_SetRenderDrawColor(gRenderer, 0xC0, 0xC0, 0xC0, 0xFF);
+		for (unsigned int i = 0; i < SCREEN_HEIGHT; i += y_unit) {
+			SDL_RenderDrawLine(gRenderer, 0, i, SCREEN_WIDTH, i);
+		}
+		for (unsigned int i = 0; i < SCREEN_WIDTH; i += x_unit) {
+			SDL_RenderDrawLine(gRenderer, i, 0, i, SCREEN_HEIGHT);
+		}
+		SDL_SetRenderDrawColor(gRenderer, 0x00, 0x00, 0xF0, 0xFF);
+		for (unsigned int separator : core_separators) {
+			for (int line = -2; line <= 2; line++) {
+				SDL_RenderDrawLine(gRenderer, 0, separator + line, SCREEN_WIDTH, separator + line);
+			}
+		}
 
+        if (!drawing_elements.empty()) {
+        	for (const DrawingElement element : drawing_elements) {
+        		SDL_SetRenderDrawColor(gRenderer, 0xFF, 0x00, 0x00, 0xFF);
+            	SDL_RenderDrawRect(gRenderer, &element.rectangle);
+            	SDL_RenderCopy(gRenderer, element.texture, nullptr, &element.rectangle);
+        	}
+        }
         // Update screen
         SDL_RenderPresent(gRenderer);
     }
+
+    for (const DrawingElement element : drawing_elements) {
+		SDL_DestroyTexture(element.texture);
+    	SDL_FreeSurface(element.surface);
+	}
+    TTF_CloseFont(font);
+    TTF_Quit();
 
     close();
 }
@@ -271,8 +330,6 @@ int main() {
         std::cout << subtask << std::endl;
     }
 
-    // const std::pair<float, unsigned int> counted = getUnits(Subtasks);
-    // std::cout << "(width = " << counted.first << ", height = " << counted.second << ")" << std::endl;
     drawGraph(subtasks);
 
 
